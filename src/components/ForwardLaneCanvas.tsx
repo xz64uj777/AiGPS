@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from "react";
+import { LaneTrafficStatus, TrafficIncident } from "../types";
 
 interface ForwardLaneCanvasProps {
   laneCount: number;
@@ -10,6 +11,9 @@ interface ForwardLaneCanvasProps {
   disabled?: boolean;
   statusMessage?: string;
   className?: string;
+  laneTraffic?: LaneTrafficStatus[];
+  incidents?: TrafficIncident[];
+  trafficDelaySeconds?: number;
 }
 
 export const ForwardLaneCanvas: React.FC<ForwardLaneCanvasProps> = ({
@@ -22,6 +26,9 @@ export const ForwardLaneCanvas: React.FC<ForwardLaneCanvasProps> = ({
   disabled = false,
   statusMessage,
   className = "w-full h-72 sm:h-80 md:h-96",
+  laneTraffic,
+  incidents = [],
+  trafficDelaySeconds = 0,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -122,6 +129,48 @@ export const ForwardLaneCanvas: React.FC<ForwardLaneCanvasProps> = ({
       const safeCount = Math.max(1, Math.min(8, laneCount));
       const activeIdx = currentLane !== null ? currentLane - 1 : -1;
 
+      // 1. Draw Live Per-Lane Traffic Underlay Ribbons
+      if (!disabled && laneTraffic && laneTraffic.length > 0) {
+        for (let i = 0; i < safeCount; i++) {
+          const laneInfo = laneTraffic.find((l) => l.laneNumber === i + 1);
+          const leftT = i / safeCount;
+          const rightT = (i + 1) / safeCount;
+
+          const tlX = centerX - horizonHalfWidth + 2 * horizonHalfWidth * leftT;
+          const trX = centerX - horizonHalfWidth + 2 * horizonHalfWidth * rightT;
+          const blX = centerX - bottomHalfWidth + 2 * bottomHalfWidth * leftT;
+          const brX = centerX - bottomHalfWidth + 2 * bottomHalfWidth * rightT;
+
+          ctx.beginPath();
+          ctx.moveTo(tlX, horizonY);
+          ctx.lineTo(trX, horizonY);
+          ctx.lineTo(brX, bottomY);
+          ctx.lineTo(blX, bottomY);
+          ctx.closePath();
+
+          const trafGrad = ctx.createLinearGradient(0, horizonY, 0, bottomY);
+          if (laneInfo?.congestion === "TRAFFIC_JAM") {
+            trafGrad.addColorStop(0, "rgba(239, 68, 68, 0.05)");
+            trafGrad.addColorStop(0.7, "rgba(239, 68, 68, 0.22)");
+            trafGrad.addColorStop(1, "rgba(220, 38, 38, 0.38)");
+          } else if (laneInfo?.congestion === "SLOW") {
+            trafGrad.addColorStop(0, "rgba(245, 158, 11, 0.05)");
+            trafGrad.addColorStop(0.7, "rgba(245, 158, 11, 0.18)");
+            trafGrad.addColorStop(1, "rgba(217, 119, 6, 0.32)");
+          } else if (laneInfo?.isHovOrExpress) {
+            trafGrad.addColorStop(0, "rgba(168, 85, 247, 0.05)");
+            trafGrad.addColorStop(0.7, "rgba(168, 85, 247, 0.16)");
+            trafGrad.addColorStop(1, "rgba(147, 51, 234, 0.26)");
+          } else {
+            trafGrad.addColorStop(0, "rgba(16, 185, 129, 0.03)");
+            trafGrad.addColorStop(0.7, "rgba(16, 185, 129, 0.10)");
+            trafGrad.addColorStop(1, "rgba(16, 185, 129, 0.18)");
+          }
+          ctx.fillStyle = trafGrad;
+          ctx.fill();
+        }
+      }
+
       // Draw highlighted current lane band
       if (!disabled && activeIdx >= 0 && activeIdx < safeCount) {
         const leftT = activeIdx / safeCount;
@@ -141,17 +190,17 @@ export const ForwardLaneCanvas: React.FC<ForwardLaneCanvasProps> = ({
 
         const bandGrad = ctx.createLinearGradient(0, horizonY, 0, bottomY);
         if (exactClaim) {
-          bandGrad.addColorStop(0, "rgba(52, 211, 153, 0.08)");
-          bandGrad.addColorStop(0.7, "rgba(52, 211, 153, 0.28)");
-          bandGrad.addColorStop(1, "rgba(16, 185, 129, 0.45)");
+          bandGrad.addColorStop(0, "rgba(52, 211, 153, 0.12)");
+          bandGrad.addColorStop(0.7, "rgba(52, 211, 153, 0.32)");
+          bandGrad.addColorStop(1, "rgba(16, 185, 129, 0.52)");
         } else if (confidence >= 0.7) {
-          bandGrad.addColorStop(0, "rgba(56, 189, 248, 0.08)");
-          bandGrad.addColorStop(0.7, "rgba(56, 189, 248, 0.25)");
-          bandGrad.addColorStop(1, "rgba(14, 165, 233, 0.4)");
+          bandGrad.addColorStop(0, "rgba(56, 189, 248, 0.10)");
+          bandGrad.addColorStop(0.7, "rgba(56, 189, 248, 0.28)");
+          bandGrad.addColorStop(1, "rgba(14, 165, 233, 0.45)");
         } else {
-          bandGrad.addColorStop(0, "rgba(251, 191, 36, 0.08)");
-          bandGrad.addColorStop(0.7, "rgba(251, 191, 36, 0.22)");
-          bandGrad.addColorStop(1, "rgba(245, 158, 11, 0.35)");
+          bandGrad.addColorStop(0, "rgba(251, 191, 36, 0.10)");
+          bandGrad.addColorStop(0.7, "rgba(251, 191, 36, 0.25)");
+          bandGrad.addColorStop(1, "rgba(245, 158, 11, 0.40)");
         }
         ctx.fillStyle = bandGrad;
         ctx.fill();
@@ -200,7 +249,7 @@ export const ForwardLaneCanvas: React.FC<ForwardLaneCanvasProps> = ({
         ctx.stroke();
       }
 
-      // Draw Lane Movement Arrows & Target badges
+      // Draw Lane Movement Arrows, Traffic Speed Badges & Target badges
       for (let i = 0; i < safeCount; i++) {
         const laneNum = i + 1;
         const leftT = i / safeCount;
@@ -216,6 +265,10 @@ export const ForwardLaneCanvas: React.FC<ForwardLaneCanvasProps> = ({
         const isTarget = targetLanes.includes(laneNum);
         const isCurrent = currentLane === laneNum;
 
+        // Per-lane traffic status
+        const laneInfo = laneTraffic?.find((l) => l.laneNumber === laneNum);
+        const hasIncident = incidents.some((inc) => inc.affectedLanes.includes(laneNum));
+
         // Draw Lane Number label at the bottom of each lane
         const botMidX = centerX - bottomHalfWidth + 2 * bottomHalfWidth * midT;
         ctx.font = `600 ${Math.max(11, Math.floor(w * 0.02))}px 'Plus Jakarta Sans', sans-serif`;
@@ -230,6 +283,34 @@ export const ForwardLaneCanvas: React.FC<ForwardLaneCanvasProps> = ({
           ctx.fillStyle = "#94a3b8";
         }
         ctx.fillText(`L${laneNum}`, botMidX, bottomY - 38);
+
+        // Per-lane Speed Tag (Traffic-aware)
+        if (laneInfo && !disabled) {
+          ctx.font = `700 ${Math.max(10, Math.floor(w * 0.018))}px 'Plus Jakarta Sans', sans-serif`;
+          if (laneInfo.congestion === "TRAFFIC_JAM") {
+            ctx.fillStyle = "#f87171";
+          } else if (laneInfo.congestion === "SLOW") {
+            ctx.fillStyle = "#fbbf24";
+          } else if (laneInfo.isHovOrExpress) {
+            ctx.fillStyle = "#c084fc";
+          } else {
+            ctx.fillStyle = "#34d399";
+          }
+          ctx.fillText(`${laneInfo.speedMph} mph`, botMidX, bottomY - 54);
+        }
+
+        // Incident / Congestion Warning Tag above affected lanes
+        if (hasIncident && !disabled) {
+          ctx.save();
+          const incidentY = horizonY + (bottomY - horizonY) * 0.32;
+          const incidentW = horizonHalfWidth + (bottomHalfWidth - horizonHalfWidth) * 0.32;
+          const incidentX = centerX - incidentW + 2 * incidentW * midT;
+
+          ctx.font = `800 ${Math.max(9, Math.floor(w * 0.016))}px 'Plus Jakarta Sans', sans-serif`;
+          ctx.fillStyle = "#ef4444";
+          ctx.fillText("⚠ SLOW", incidentX, incidentY);
+          ctx.restore();
+        }
 
         // Arrow graphics
         if (!disabled) {
@@ -298,7 +379,7 @@ export const ForwardLaneCanvas: React.FC<ForwardLaneCanvasProps> = ({
         cancelAnimationFrame(animFrameIdRef.current);
       }
     };
-  }, [laneCount, currentLane, exactClaim, confidence, targetLanes, speedMps, disabled, statusMessage]);
+  }, [laneCount, currentLane, exactClaim, confidence, targetLanes, speedMps, disabled, statusMessage, laneTraffic, incidents]);
 
   return (
     <div ref={containerRef} className={`relative overflow-hidden rounded-2xl bg-[#0e1422] ${className}`}>

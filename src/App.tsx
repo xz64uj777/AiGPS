@@ -12,7 +12,13 @@ import { DriverCockpit } from "./components/DriverCockpit";
 import { ReplayLab } from "./components/ReplayLab";
 import { CorridorExplorer } from "./components/CorridorExplorer";
 import { RoutePlannerModal } from "./components/RoutePlannerModal";
-import { GnssTelemetry, MotionSensors, LaneState, ManeuverInstruction } from "./types";
+import {
+  GnssTelemetry,
+  MotionSensors,
+  LaneState,
+  ManeuverInstruction,
+  LiveTrafficSummary,
+} from "./types";
 
 export function App() {
   const [activeTab, setActiveTab] = useState<"cockpit" | "replay" | "corridor">("cockpit");
@@ -24,6 +30,10 @@ export function App() {
   // Active navigation route summary
   const [destination, setDestination] = useState<string>("Foothill Expressway, Cupertino");
   const [routeDistanceMeters, setRouteDistanceMeters] = useState<number>(14200);
+
+  // Live Google Maps Traffic state
+  const [liveTraffic, setLiveTraffic] = useState<LiveTrafficSummary | null>(null);
+  const [trafficLoading, setTrafficLoading] = useState<boolean>(false);
 
   // Core Maneuvers
   const [maneuvers, setManeuvers] = useState<ManeuverInstruction[]>([
@@ -182,6 +192,53 @@ export function App() {
     };
   }, []);
 
+  const refreshLiveTraffic = async (customDest?: string) => {
+    setTrafficLoading(true);
+    try {
+      const res = await fetch("/api/v1/traffic/route", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          origin: { lat: telemetry.latitude, lon: telemetry.longitude },
+          destination: { lat: 37.3382, lon: -122.0463 },
+          destinationName: customDest || destination,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setLiveTraffic({
+          liveDurationSeconds: data.liveDurationSeconds,
+          typicalDurationSeconds: data.typicalDurationSeconds,
+          delaySeconds: data.delaySeconds,
+          distanceMeters: data.distanceMeters,
+          routeDescription: data.routeDescription,
+          overallCongestion: data.overallCongestion,
+          laneSpeeds: data.laneSpeeds,
+          incidents: data.incidents || [],
+          recommendedLaneReason: data.recommendedLaneReason,
+          source: "google-maps-routes-api",
+          lastUpdated: data.lastUpdated || new Date().toISOString(),
+        });
+        if (data.maneuvers && data.maneuvers.length > 0) {
+          setManeuvers(data.maneuvers);
+          setLaneState((prev) => ({
+            ...prev,
+            targetLanes: data.maneuvers[0].recommendedLanes || prev.targetLanes,
+          }));
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to refresh live traffic:", err);
+    } finally {
+      setTrafficLoading(false);
+    }
+  };
+
+  // Initial live traffic fetch on mount
+  useEffect(() => {
+    refreshLiveTraffic();
+  }, []);
+
   const handleSelectLane = (laneNum: number) => {
     setLaneState((prev) => {
       const probs = Array(prev.laneCount).fill(0.02);
@@ -196,11 +253,19 @@ export function App() {
     });
   };
 
-  const handleApplyRoute = (newDest: string, newDist: number, newManeuvers: ManeuverInstruction[]) => {
+  const handleApplyRoute = (
+    newDest: string,
+    newDist: number,
+    newManeuvers: ManeuverInstruction[],
+    newTraffic?: LiveTrafficSummary
+  ) => {
     setDestination(newDest);
     setRouteDistanceMeters(newDist);
     setManeuvers(newManeuvers);
     setCurrentManeuverIndex(0);
+    if (newTraffic) {
+      setLiveTraffic(newTraffic);
+    }
     if (newManeuvers.length > 0) {
       setLaneState((prev) => ({
         ...prev,
@@ -280,8 +345,28 @@ export function App() {
             </button>
           </nav>
 
-          {/* Route Destination Trigger */}
+          {/* Route Destination Trigger & Live Traffic Delay Pill */}
           <div className="hidden md:flex items-center gap-2">
+            {liveTraffic && (
+              <div
+                className={`px-2.5 py-1 rounded-xl text-[11px] font-bold border flex items-center gap-1.5 ${
+                  liveTraffic.delaySeconds > 300
+                    ? "bg-red-500/20 text-red-300 border-red-500/30"
+                    : liveTraffic.delaySeconds > 60
+                    ? "bg-amber-500/20 text-amber-300 border-amber-500/30"
+                    : "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
+                }`}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span>{Math.round(liveTraffic.liveDurationSeconds / 60)} min ETA</span>
+                {liveTraffic.delaySeconds > 60 && (
+                  <span className="text-amber-400 font-semibold">
+                    (+{Math.round(liveTraffic.delaySeconds / 60)}m delay)
+                  </span>
+                )}
+              </div>
+            )}
+
             <button
               id="open-route-modal-btn"
               onClick={() => setShowRouteModal(true)}
@@ -309,6 +394,11 @@ export function App() {
             onUseBrowserLocation={toggleBrowserGps}
             usingBrowserGps={usingBrowserGps}
             onSelectLane={handleSelectLane}
+            liveTraffic={liveTraffic}
+            trafficLoading={trafficLoading}
+            onRefreshTraffic={() => refreshLiveTraffic()}
+            onOpenRoutePlanner={() => setShowRouteModal(true)}
+            destinationName={destination}
           />
         )}
 

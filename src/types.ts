@@ -109,3 +109,37 @@ export interface ReplayEvaluation {
   false_lane_change_events: number;
   calibration: Record<string, CalibrationBucket>;
 }
+
+export type TrafficCongestionLevel = "CLEAR" | "NORMAL" | "SLOW" | "TRAFFIC_JAM";
+
+export interface LaneTrafficStatus {
+  laneNumber: number; // 1-indexed
+  speedMph: number;
+  freeFlowSpeedMph: number;
+  congestion: TrafficCongestionLevel;
+  isHovOrExpress: boolean;
+  label: string;
+}
+
+export interface TrafficIncident {
+  id: string;
+  type: "CONGESTION" | "ACCIDENT" | "ROADWORK" | "SLOWDOWN";
+  description: string;
+  distanceMeters: number;
+  affectedLanes: number[]; // 1-indexed
+  delaySeconds: number;
+}
+
+export interface LiveTrafficSummary {
+  liveDurationSeconds: number;
+  typicalDurationSeconds: number;
+  delaySeconds: number;
+  distanceMeters: number;
+  routeDescription: string;
+  overallCongestion: TrafficCongestionLevel;
+  laneSpeeds: LaneTrafficStatus[];
+  incidents: TrafficIncident[];
+  recommendedLaneReason?: string;
+  source: "google-maps-routes-api" | "live-feed";
+  lastUpdated: string;
+}

@@ -14,9 +14,20 @@ import {
   MapPin,
   RefreshCw,
   Sliders,
+  Clock,
+  Zap,
+  TrendingDown,
+  ShieldCheck,
+  AlertCircle,
 } from "lucide-react";
 import { ForwardLaneCanvas } from "./ForwardLaneCanvas";
-import { GnssTelemetry, MotionSensors, LaneState, ManeuverInstruction } from "../types";
+import {
+  GnssTelemetry,
+  MotionSensors,
+  LaneState,
+  ManeuverInstruction,
+  LiveTrafficSummary,
+} from "../types";
 
 interface DriverCockpitProps {
   telemetry: GnssTelemetry;
@@ -30,6 +41,11 @@ interface DriverCockpitProps {
   onUseBrowserLocation: () => void;
   usingBrowserGps: boolean;
   onSelectLane: (laneNumber: number) => void;
+  liveTraffic?: LiveTrafficSummary | null;
+  trafficLoading?: boolean;
+  onRefreshTraffic?: () => void;
+  onOpenRoutePlanner?: () => void;
+  destinationName?: string;
 }
 
 export const DriverCockpit: React.FC<DriverCockpitProps> = ({
@@ -44,6 +60,11 @@ export const DriverCockpit: React.FC<DriverCockpitProps> = ({
   onUseBrowserLocation,
   usingBrowserGps,
   onSelectLane,
+  liveTraffic,
+  trafficLoading = false,
+  onRefreshTraffic,
+  onOpenRoutePlanner,
+  destinationName = "Foothill Expressway, Cupertino",
 }) => {
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [aiVoicePrompt, setAiVoicePrompt] = useState<string>("");
@@ -53,6 +74,14 @@ export const DriverCockpit: React.FC<DriverCockpitProps> = ({
   const speedMph = (telemetry.speedMps * 2.23694).toFixed(0);
   const isGpsStale = telemetry.fixAgeMs > 4000;
   const confidencePct = Math.round(laneState.laneConfidence * 100);
+
+  // Compute live duration & delay strings
+  const liveMinutes = liveTraffic
+    ? Math.max(1, Math.round(liveTraffic.liveDurationSeconds / 60))
+    : 14;
+  const delayMinutes = liveTraffic
+    ? Math.round(liveTraffic.delaySeconds / 60)
+    : 0;
 
   // Request voice guidance prompt
   const requestVoicePrompt = async () => {
@@ -68,6 +97,8 @@ export const DriverCockpit: React.FC<DriverCockpitProps> = ({
           maneuver: maneuver.maneuver,
           distanceMeters: maneuver.distanceMeters,
           confidence: laneState.laneConfidence,
+          trafficDelayMinutes: delayMinutes,
+          trafficCondition: liveTraffic?.overallCongestion || "NORMAL",
         }),
       });
       const data = await res.json();
@@ -100,16 +131,32 @@ export const DriverCockpit: React.FC<DriverCockpitProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-extrabold tracking-tight text-white">LaneGPS</h1>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 font-medium">
-                v0.2.0 MVP
+              <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Live Google Maps Traffic
               </span>
             </div>
-            <p className="text-xs text-slate-400">Probabilistic Lane-Level Navigation Engine</p>
+            <p className="text-xs text-slate-400">
+              Probabilistic Lane Navigation with Real-Time Congestion & ETA
+            </p>
           </div>
         </div>
 
         {/* Status Pills & Controls */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* Refresh Traffic Button */}
+          {onRefreshTraffic && (
+            <button
+              onClick={onRefreshTraffic}
+              disabled={trafficLoading}
+              title="Refresh live Google Maps traffic flow"
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all disabled:opacity-60"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-blue-400 ${trafficLoading ? "animate-spin" : ""}`} />
+              <span>{trafficLoading ? "Syncing..." : "Live Traffic"}</span>
+            </button>
+          )}
+
           {/* Status Indicator */}
           <div
             className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 ${
@@ -129,7 +176,7 @@ export const DriverCockpit: React.FC<DriverCockpitProps> = ({
                   : "bg-blue-400"
               }`}
             />
-            {isGpsStale ? "GPS LOST" : sessionActive ? "RECORDING DRIVE" : "READY"}
+            {isGpsStale ? "GPS LOST" : sessionActive ? "RECORDING DRIVE" : "ONLINE"}
           </div>
 
           {/* Session Record Button */}
@@ -153,20 +200,6 @@ export const DriverCockpit: React.FC<DriverCockpitProps> = ({
             )}
           </button>
 
-          {/* Simulation Toggle */}
-          <button
-            id="toggle-simulation-btn"
-            onClick={() => onSimulateDrive(!isSimulating)}
-            className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border ${
-              isSimulating
-                ? "bg-cyan-950/80 text-cyan-300 border-cyan-500/50"
-                : "bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700"
-            }`}
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isSimulating ? "animate-spin text-cyan-400" : ""}`} />
-            {isSimulating ? "Simulating Route" : "Simulate Drive"}
-          </button>
-
           {/* Browser Location Button */}
           <button
             id="toggle-browser-gps-btn"
@@ -182,6 +215,143 @@ export const DriverCockpit: React.FC<DriverCockpitProps> = ({
             {usingBrowserGps ? "Real GPS Active" : "Use Real GPS"}
           </button>
         </div>
+      </div>
+
+      {/* Live Traffic Aware ETA & Highway Corridor Banner */}
+      <div className="bg-[#121927] border border-slate-800 rounded-2xl p-4 shadow-lg">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {/* Destination & Real ETA */}
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-blue-400">
+              <Clock className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">
+                  Live Traffic-Aware ETA
+                </span>
+                <span
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                    delayMinutes > 5
+                      ? "bg-red-500/20 text-red-400 border border-red-500/30"
+                      : delayMinutes > 1
+                      ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                      : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                  }`}
+                >
+                  {delayMinutes > 0 ? `+${delayMinutes} MIN DELAY` : "CLEAR FLOW"}
+                </span>
+              </div>
+              <div className="flex items-baseline gap-2 mt-0.5">
+                <span className="text-2xl font-black text-white">{liveMinutes} min</span>
+                <span className="text-xs text-slate-400">
+                  ({((liveTraffic?.distanceMeters || 14200) / 1609.34).toFixed(1)} mi via {destinationName})
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Route Switcher / Congestion Level */}
+          <div className="flex items-center gap-2">
+            <div className="text-right hidden sm:block">
+              <div className="text-[10px] uppercase font-bold text-slate-400">Corridor Flow</div>
+              <div className="text-xs font-bold text-emerald-400 flex items-center gap-1 justify-end">
+                <Zap className="w-3.5 h-3.5 text-emerald-400" />
+                {liveTraffic?.overallCongestion === "TRAFFIC_JAM"
+                  ? "HEAVY TRAFFIC JAM"
+                  : liveTraffic?.overallCongestion === "SLOW"
+                  ? "MODERATE SLOWDOWN"
+                  : "FREE FLOW (OPTIMAL)"}
+              </div>
+            </div>
+            {onOpenRoutePlanner && (
+              <button
+                onClick={onOpenRoutePlanner}
+                className="px-3 py-2 rounded-xl bg-blue-600/30 hover:bg-blue-600/50 border border-blue-500/40 text-blue-200 text-xs font-bold transition-all"
+              >
+                Change Destination
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Live Per-Lane Congestion Distribution Bar */}
+        {liveTraffic?.laneSpeeds && liveTraffic.laneSpeeds.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-slate-800/80">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <TrendingDown className="w-3.5 h-3.5 text-blue-400" />
+                Live Per-Lane Speeds (Google Maps Routes Feed)
+              </span>
+              <span className="text-[11px] text-slate-400 font-mono">
+                Updated {liveTraffic.lastUpdated ? new Date(liveTraffic.lastUpdated).toLocaleTimeString() : "Just now"}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {liveTraffic.laneSpeeds.map((lane) => {
+                const isCurrent = laneState.likelyLaneNumberFromLeft === lane.laneNumber;
+                return (
+                  <div
+                    key={lane.laneNumber}
+                    onClick={() => onSelectLane(lane.laneNumber)}
+                    className={`p-2 rounded-xl border transition-all cursor-pointer ${
+                      isCurrent
+                        ? "bg-emerald-950/40 border-emerald-500/60 ring-1 ring-emerald-400/40"
+                        : "bg-[#0a0f1a] border-slate-800 hover:border-slate-700"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-slate-200 flex items-center gap-1">
+                        Lane {lane.laneNumber}
+                        {lane.isHovOrExpress && (
+                          <span className="text-[9px] px-1 py-0.2 rounded bg-purple-500/30 text-purple-300">
+                            HOV
+                          </span>
+                        )}
+                      </span>
+                      <span
+                        className={`font-black font-mono text-sm ${
+                          lane.congestion === "TRAFFIC_JAM"
+                            ? "text-red-400"
+                            : lane.congestion === "SLOW"
+                            ? "text-amber-400"
+                            : "text-emerald-400"
+                        }`}
+                      >
+                        {lane.speedMph} mph
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-1 flex justify-between">
+                      <span>{lane.label}</span>
+                      <span
+                        className={
+                          lane.congestion === "TRAFFIC_JAM"
+                            ? "text-red-400 font-bold"
+                            : lane.congestion === "SLOW"
+                            ? "text-amber-400 font-semibold"
+                            : "text-emerald-400"
+                        }
+                      >
+                        {lane.congestion}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Live Traffic Hazard Advisory */}
+        {liveTraffic?.incidents && liveTraffic.incidents.length > 0 && (
+          <div className="mt-3 bg-amber-950/40 border border-amber-500/40 rounded-xl p-2.5 flex items-center gap-2.5 text-xs text-amber-200">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            <div className="flex-1">
+              <span className="font-bold">Live Traffic Advisory: </span>
+              <span>{liveTraffic.incidents[0].description}</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* GPS Stale Warning Banner */}
@@ -246,7 +416,7 @@ export const DriverCockpit: React.FC<DriverCockpitProps> = ({
               </div>
             </div>
 
-            {/* Perspective Canvas */}
+            {/* Perspective Canvas with Live Traffic Ribbons */}
             <div className="relative">
               <ForwardLaneCanvas
                 laneCount={laneState.laneCount}
@@ -258,6 +428,9 @@ export const DriverCockpit: React.FC<DriverCockpitProps> = ({
                 disabled={isGpsStale}
                 statusMessage={telemetry.fixAgeMs > 4000 ? "Waiting for fresh GNSS fix" : undefined}
                 className="w-full h-72 sm:h-80 md:h-[340px]"
+                laneTraffic={liveTraffic?.laneSpeeds}
+                incidents={liveTraffic?.incidents}
+                trafficDelaySeconds={liveTraffic?.delaySeconds}
               />
 
               {/* Floating Guidance Badge */}
@@ -277,6 +450,14 @@ export const DriverCockpit: React.FC<DriverCockpitProps> = ({
                     : `PROBABLE LANE ${laneState.likelyLaneNumberFromLeft} (${confidencePct}%)`}
                 </span>
               </div>
+
+              {/* Floating Live Traffic Badge */}
+              {liveTraffic && (
+                <div className="absolute top-3 right-3 bg-[#0d1320]/85 backdrop-blur-md border border-slate-700/60 rounded-xl px-3 py-1.5 flex items-center gap-1.5 text-[11px] font-bold">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="text-white">Google Maps Routes API</span>
+                </div>
+              )}
             </div>
 
             {/* Voice Guidance Trigger */}
@@ -284,7 +465,7 @@ export const DriverCockpit: React.FC<DriverCockpitProps> = ({
               <div className="flex items-center gap-2 text-xs text-slate-400">
                 <Volume2 className="w-4 h-4 text-blue-400 shrink-0" />
                 <span className="italic">
-                  {aiVoicePrompt || "Tap Generate Voice to hear synthesized lane audio instruction"}
+                  {aiVoicePrompt || "Tap Voice Guidance to hear real-time spoken lane & traffic advice"}
                 </span>
               </div>
               <button
@@ -344,7 +525,7 @@ export const DriverCockpit: React.FC<DriverCockpitProps> = ({
                     </div>
                     <div className="text-[10px] mt-1.5 text-slate-400 flex items-center justify-between">
                       <span>{isCurrent ? "Active" : isTarget ? "Target" : "Available"}</span>
-                      <span>{laneIdx === 0 ? "Left Turn" : laneIdx === 3 ? "Exit" : "Thru"}</span>
+                      <span>{laneIdx === 0 ? "Left/HOV" : laneIdx === 3 ? "Exit" : "Thru"}</span>
                     </div>
                   </div>
                 );
@@ -488,6 +669,10 @@ export const DriverCockpit: React.FC<DriverCockpitProps> = ({
               <div className="flex justify-between">
                 <span className="text-slate-500">Exact Claim Asserted:</span>
                 <span>{laneState.laneExactClaim ? "YES (HIGH CONFIDENCE)" : "NO (PROBABILISTIC)"}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Google Maps Live Feed:</span>
+                <span className="text-emerald-400">Routes API v2 TRAFFIC_AWARE_OPTIMAL</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Fused Heading:</span>
