@@ -1,0 +1,6 @@
+{
+  "name": "Lane-Level GPS",
+  "description": "Forward-looking lane navigation, live GNSS telemetry, corridor analysis, and drive replay simulator",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
